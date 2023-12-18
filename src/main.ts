@@ -1,26 +1,11 @@
+import { ChatCompletionMessageParam } from 'openai/resources/index.mjs';
 import { openai } from './openai';
 
 const form = document.querySelector('#generate-form') as HTMLFormElement;
 const iframe = document.querySelector('#generated-code') as HTMLIFrameElement;
+const fieldset = form.querySelector('fieldset') as HTMLFieldSetElement;
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const formData = new FormData(form);
-
-  const prompt = formData.get('prompt') as string;
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4-1106-preview',
-    temperature: 1,
-    top_p: 1,
-    frequency_penalty: 0,
-    presence_penalty: 0,
-    max_tokens: 1500,
-    stream: true,
-    messages: [
-      {
-        role: 'system',
-        content: `
+const SYSTEM_PROMPT = `
 Context:
 You are TailwindGPT, an AI text generator that writes Tailwind / HTML code.
 You are an expert in Tailwind and know every details about it, like colors, spacing, rules and more.
@@ -44,10 +29,61 @@ Criteria:
 Response format:
 - You generate only plain html text
 - You never add "\`\`\`" before or after the code
-- You never add any comments`,
-      },
-      { role: 'user', content: prompt },
-    ],
+- You never add any comments`;
+
+let messages: ChatCompletionMessageParam[] = [
+  {
+    role: 'system',
+    content: SYSTEM_PROMPT,
+  },
+];
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  if (fieldset.disabled) {
+    return;
+  }
+
+  const formData = new FormData(form);
+
+  const prompt = formData.get('prompt') as string;
+
+  if (!prompt) {
+    return;
+  }
+
+  let openaiKey = localStorage.getItem('openai-key') ?? '';
+
+  if (!openaiKey) {
+    const newKey = window.prompt('Please enter your OpenAI API key');
+
+    if (!newKey) {
+      return;
+    }
+
+    localStorage.setItem('openai-key', newKey);
+
+    openaiKey = newKey;
+  }
+
+  messages.push({
+    role: 'user',
+    content: prompt,
+  });
+  renderMessages();
+
+  fieldset.disabled = true;
+
+  const response = await openai(openaiKey).chat.completions.create({
+    model: 'gpt-4-1106-preview',
+    temperature: 1,
+    top_p: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+    max_tokens: 1500,
+    stream: true,
+    messages,
   });
 
   let code = '';
@@ -56,11 +92,20 @@ Response format:
   for await (const message of response) {
     const isDone = message.choices[0].finish_reason === 'stop';
     const token = message.choices[0].delta.content;
-    code += token;
+    console.log(message);
 
     if (isDone) {
+      form.reset();
+      fieldset.disabled = false;
+      messages = messages.filter((message) => message.role !== 'assistant');
+      messages.push({
+        role: 'assistant',
+        content: code,
+      });
       break;
     }
+
+    code += token;
 
     onNewChunk(code);
   }
@@ -101,4 +146,18 @@ const updateIframe = (code: string) => {
       ${code}
     </body>
   </html>`;
+};
+
+const renderMessages = () => {
+  const ul = document.querySelector('#messages') as HTMLUListElement;
+  ul.innerHTML = '';
+
+  for (const message of messages) {
+    if (message.role !== 'user') {
+      continue;
+    }
+    const li = document.createElement('li');
+    li.innerText = `You: ${message.content}`;
+    ul.appendChild(li);
+  }
 };
