@@ -9,7 +9,7 @@ form.addEventListener('submit', async (e) => {
 
   const prompt = formData.get('prompt') as string;
 
-  const chatCompletion = await openai.chat.completions.create({
+  const response = await openai.chat.completions.create({
     messages: [
       {
         role: 'system',
@@ -22,24 +22,58 @@ Tu n'ajoutes jamais de syntaxe markdown.`,
       { role: 'user', content: prompt },
     ],
     model: 'gpt-3.5-turbo',
+    stream: true,
   });
 
-  const code = chatCompletion.choices[0].message.content;
+  let code = '';
+  const onNewChunk = createTimedUpdateIframe();
 
-  if (!code) {
-    alert('Erreur: Aucun code généré');
-    return;
+  for await (const message of response) {
+    const isDone = message.choices[0].finish_reason === 'stop';
+    const token = message.choices[0].delta.content;
+    code += token;
+
+    if (isDone) {
+      break;
+    }
+
+    onNewChunk(code);
   }
-
-  iframe.srcdoc = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <title>Generated Code</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body>
-    ${code}
-  </body>
-</html>`;
 });
+
+const createTimedUpdateIframe = () => {
+  let date = new Date();
+  let timeout: any = null;
+
+  return (code: string) => {
+    // only call updateIframe if last call was more than 1 second ago
+    if (new Date().getTime() - date.getTime() > 1000) {
+      updateIframe(code);
+      date = new Date();
+    }
+
+    // clear previous timeout
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+
+    // set new timeout
+    timeout = setTimeout(() => {
+      updateIframe(code);
+    }, 1000);
+  };
+};
+
+const updateIframe = (code: string) => {
+  iframe.srcdoc = `<!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>Generated Code</title>
+      <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body>
+      ${code}
+    </body>
+  </html>`;
+};
